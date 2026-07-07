@@ -354,3 +354,41 @@ compat_test!(
     mode = "nearest",
     cval = 0.0
 );
+
+// Degenerate sigma=0 → scipy passes the input straight through (identity).
+// The golden .out is byte-for-byte the .in.
+compat_test!(
+    float_4x5_s00_nearest,
+    "float_4x5_s00_nearest",
+    sigma = 0.0,
+    truncate = 4.0,
+    mode = "nearest",
+    cval = 0.0
+);
+
+// Size-1 axes under mirror (period 2n-2 = 0 for n=1). scipy handles them; a
+// size-1 axis maps every offset onto its sole element.
+compat_test!(
+    float_1x9_s10_mirror,
+    "float_1x9_s10_mirror",
+    sigma = 1.0,
+    truncate = 4.0,
+    mode = "mirror",
+    cval = 0.0
+);
+compat_test!(
+    float_9x1_s10_mirror,
+    "float_9x1_s10_mirror",
+    sigma = 1.0,
+    truncate = 4.0,
+    mode = "mirror",
+    cval = 0.0
+);
+compat_test!(
+    float_1x1_s10_mirror,
+    "float_1x1_s10_mirror",
+    sigma = 1.0,
+    truncate = 4.0,
+    mode = "mirror",
+    cval = 0.0
+);

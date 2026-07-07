@@ -65,7 +65,12 @@ pub fn extend_index(i: isize, n: isize, mode: Mode, cval: f64, buf: &[f64]) -> f
             buf[j as usize]
         }
         Mode::Mirror => {
-            // scipy mirror: ...c b a | b c d ... (edge not repeated; period = 2n-2)
+            // scipy mirror: ...c b a | b c d ... (edge not repeated; period = 2n-2).
+            // A size-1 axis has no interior to mirror — every offset lands on the
+            // sole element (and period 2n-2 would be zero).
+            if n == 1 {
+                return buf[0];
+            }
             let period = 2 * n - 2;
             let mut j = ((i % period) + period) % period;
             if j >= n {
@@ -232,14 +237,21 @@ fn convolve_cols(
 /// If `params.is_integer` is true, divide by 255.0 first — matching
 /// skimage's `img_as_float` uint8 convention.
 pub fn gaussian_filter2d(pixels: &[f64], h: usize, w: usize, p: &FilterParams) -> Vec<f64> {
-    let kernel = gaussian_kernel1d(p.sigma, p.truncate);
-
     // Scale as skimage does: integer input → divide by 255.0
     let input: Vec<f64> = if p.is_integer {
         pixels.iter().map(|&v| v / 255.0).collect()
     } else {
         pixels.to_vec()
     };
+
+    // scipy skips any axis whose sigma is not > 1e-15, passing the input through
+    // unchanged. One sigma drives both axes here, so sigma≈0 is a whole-image
+    // identity — and it dodges the degenerate exp(-0.5/0) kernel.
+    if p.sigma <= 1e-15 {
+        return input;
+    }
+
+    let kernel = gaussian_kernel1d(p.sigma, p.truncate);
 
     let mut scratch = vec![0.0_f64; h * w];
     let mut output = vec![0.0_f64; h * w];
@@ -343,5 +355,59 @@ mod tests {
         assert_eq!(extend_index(-2, 5, Mode::Mirror, 0.0, &buf), 2.0);
         assert_eq!(extend_index(5, 5, Mode::Mirror, 0.0, &buf), 3.0);
         assert_eq!(extend_index(6, 5, Mode::Mirror, 0.0, &buf), 2.0);
+    }
+
+    #[test]
+    fn reflect_family_size1_axis_no_divide_by_zero() {
+        // n=1: mirror's period 2n-2 is 0; every offset must resolve to the lone
+        // element without a modulo-by-zero. The other reflect-family modes must
+        // also stay finite on a size-1 axis.
+        let buf = [7.0_f64];
+        for &m in &[
+            Mode::Mirror,
+            Mode::Reflect,
+            Mode::Wrap,
+            Mode::Nearest,
+            Mode::Constant,
+        ] {
+            for i in -3..=3 {
+                let v = extend_index(i, 1, m, 99.0, &buf);
+                if m == Mode::Constant && !(0..1).contains(&i) {
+                    assert_eq!(v, 99.0);
+                } else {
+                    assert_eq!(v, 7.0, "mode {m:?} offset {i}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sigma_zero_is_identity() {
+        // scipy: gaussian_filter(x, sigma=0) == x. Must not produce NaN.
+        let pixels: Vec<f64> = vec![1.5, -2.0, 0.0, 3.25, -0.5, 4.0];
+        let p = FilterParams {
+            sigma: 0.0,
+            truncate: 4.0,
+            mode: Mode::Mirror,
+            cval: 0.0,
+            is_integer: false,
+        };
+        let out = gaussian_filter2d(&pixels, 2, 3, &p);
+        assert_eq!(out, pixels);
+    }
+
+    #[test]
+    fn mirror_size1_axis_is_finite() {
+        // A 1×N image under mirror once panicked at the size-1 row axis.
+        let pixels: Vec<f64> = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let p = FilterParams {
+            sigma: 1.0,
+            truncate: 4.0,
+            mode: Mode::Mirror,
+            cval: 0.0,
+            is_integer: false,
+        };
+        let out = gaussian_filter2d(&pixels, 1, 5, &p);
+        assert!(out.iter().all(|v| v.is_finite()));
     }
 }
